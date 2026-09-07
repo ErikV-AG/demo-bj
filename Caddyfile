@@ -1,0 +1,15 @@
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT:80} {
+	root * /usr/share/caddy
+	file_server
+	encode gzip
+
+	header {
+		Content-Security-Policy "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; media-src 'self' https: data: blob:; connect-src 'self' https: wss: blob: data:; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://player.vimeo.com https://*.vimeo.com; font-src 'self' https: data:"
+		-Server
+	}
+}
