@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agente D-ID</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #000;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    #did-agent-container { width: 100%; height: 100%; }
+
+    /* ================= Introducción en video ================= */
+    #intro {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      background: #000;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+    #intro.saliendo { opacity: 0; }
+
+    /* El iframe se agranda hasta cubrir la pantalla y se recorta por
+       los lados o por arriba y abajo, según la forma de la ventana.
+       Es el equivalente de object-fit: cover, que no aplica a iframes. */
+    #intro iframe {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100vw;
+      height: 56.25vw;      /* 16:9 */
+      min-width: 177.78vh;  /* 16:9 */
+      min-height: 100vh;
+      border: 0;
+      pointer-events: none;
+    }
+
+    /* Capa transparente sobre el iframe: sin ella, los clics se los
+       queda el reproductor de Vimeo y nunca llegan a la página. */
+    #intro-capa {
+      position: absolute;
+      inset: 0;
+      cursor: pointer;
+    }
+
+    /* Velo mientras el video espera: da contraste al botón de inicio
+       sobre la miniatura, y se retira al empezar la reproducción. */
+    #intro-capa::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      pointer-events: none;
+    }
+    #intro.esperando #intro-capa::after { opacity: 1; }
+
+    #btn-play {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 88px;
+      height: 88px;
+      padding: 0;
+      padding-left: 6px;      /* corrección óptica: el triángulo pesa
+                                 hacia la izquierda dentro del círculo */
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.92);
+      color: #111;
+      cursor: pointer;
+      box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+      transition: transform 0.15s ease, background 0.15s ease, opacity 0.3s ease;
+    }
+    #btn-play:hover  { background: #fff; transform: translate(-50%, -50%) scale(1.06); }
+    #btn-play:active { transform: translate(-50%, -50%) scale(0.98); }
+    #btn-play[hidden] { display: none; }
+    #btn-play svg { display: block; }
+
+    .intro-btn {
+      position: absolute;
+      z-index: 2;
+      background: rgba(0, 0, 0, 0.45);
+      color: #fff;
+      border: none;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      opacity: 0.75;
+      transition: opacity 0.2s;
+    }
+    .intro-btn:hover { opacity: 1; }
+    .intro-btn[hidden] { display: none; }
+
+    #btn-omitir  { bottom: 24px; right: 24px; }
+
+    @media (max-width: 640px) {
+      #btn-play { width: 72px; height: 72px; padding-left: 5px; }
+      #btn-play svg { width: 25px; height: 28px; }
+    }
+
+    /* ================= Indicador del agente activo ================= */
+    #badge-agente {
+      position: fixed;
+      top: 14px;
+      right: 16px;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      border-radius: 24px;
+      padding: 7px 8px 7px 16px;
+      font-size: 13px;
+      line-height: 1.4;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+      opacity: 0.8;
+      transition: opacity 0.2s;
+    }
+    #badge-agente:hover { opacity: 1; }
+    #badge-agente[hidden] { display: none; }
+    #badge-nombre {
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+    #badge-agente button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.22);
+      color: #fff;
+      border: none;
+      border-radius: 18px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    #badge-agente button:hover { background: rgba(255, 255, 255, 0.36); }
+    #badge-agente button:active { transform: scale(0.96); }
+
+    @media (max-width: 640px) {
+      #badge-agente { font-size: 12px; padding: 6px 7px 6px 13px; gap: 9px; }
+      #badge-agente button { font-size: 12px; padding: 7px 13px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="did-agent-container"></div>
+
+  <div id="badge-agente" hidden>
+    <span id="badge-nombre"></span>
+    <button id="btn-siguiente" type="button">⇄</button>
+  </div>
+
+  <div id="intro" hidden>
+    <div id="intro-capa"></div>
+    <button id="btn-play" type="button" aria-label="Reproducir introducción">
+      <svg width="30" height="34" viewBox="0 0 22 26" aria-hidden="true">
+        <path d="M2 2.5 L20 13 L2 23.5 Z" fill="currentColor" stroke="currentColor"
+              stroke-width="3" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <button id="btn-omitir" class="intro-btn" type="button">Omitir introducción ›</button>
+  </div>
+
+  <script src="https://player.vimeo.com/api/player.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    /* ==================================================================
+       LOS DOS AGENTES
+
+       Cada refresco de la página carga el siguiente de la lista, en
+       orden y en ciclo: Joven → Maduro → Joven → …
+
+       Se usa rotación en secuencia y no selección aleatoria porque el
+       azar puede devolver el mismo agente dos veces seguidas, que es
+       justo lo que se quiere evitar; además la rotación reparte la
+       carga por igual entre ambos.
+
+       Para forzar uno concreto sin romper el ciclo:
+         ?agente=1   (Joven)      ?agente=2   (Maduro)
+    ================================================================== */
+    const AGENTES = [
+      {
+        nombre: 'Joven',
+        agentId:   'v2_agt_KdKngG8J',
+        clientKey: 'ck_KiN5IUyNC2E1L3ggPVADQ',
+      },
+      {
+        nombre: 'Maduro',
+        agentId:   'v2_agt_noml6Z11',
+        clientKey: 'ck_Y6Dqt6YNh3tpL9E-SAZ_m',
+      },
+    ];
+
+    /* ==================================================================
+       VIDEO DE INTRODUCCIÓN
+       Para cambiarlo basta con el número del video en Vimeo.
+       Se omite con ?intro=0 en la dirección.
+    ================================================================== */
+    const VIDEO_INTRO   = '1224466657';
+    const HASH_INTRO    = 'aa02d2262e'; // hash de privacidad del video:
+                                        // sin él, un video no listado
+                                        // responde 404 al reproductor
+    const DURACION_TOPE = 5 * 60 * 1000; // corte de seguridad si el
+                                         // evento de fin nunca llega
+
+    const CLAVE_ALMACEN = 'did-agente-indice';
+    const CLAVE_INTRO   = 'did-saltar-intro';
+
+    const badge        = document.getElementById('badge-agente');
+    const badgeNombre  = document.getElementById('badge-nombre');
+    const btnSiguiente = document.getElementById('btn-siguiente');
+
+    const intro      = document.getElementById('intro');
+    const introCapa  = document.getElementById('intro-capa');
+    const btnPlay    = document.getElementById('btn-play');
+    const btnOmitir  = document.getElementById('btn-omitir');
+
+    let introActiva = false;
+
+    /* ------------------------------------------------------------------
+       Selección del agente.
+
+       El índice del último usado se guarda en localStorage. Si el
+       navegador lo bloquea (modo privado, iframe con restricciones,
+       vista previa), se cae a selección aleatoria: pierde la garantía
+       de no repetir, pero la página sigue funcionando.
+    ------------------------------------------------------------------ */
+    function leerUltimoIndice() {
+      try {
+        const v = window.localStorage.getItem(CLAVE_ALMACEN);
+        const n = parseInt(v, 10);
+        return Number.isInteger(n) ? n : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function guardarIndice(i) {
+      try {
+        window.localStorage.setItem(CLAVE_ALMACEN, String(i));
+      } catch (e) {
+        /* almacenamiento no disponible: se ignora */
+      }
+    }
+
+    function elegirIndice() {
+      // 1. Forzado por URL
+      const forzado = parseInt(new URLSearchParams(location.search).get('agente'), 10);
+      if (Number.isInteger(forzado) && forzado >= 1 && forzado <= AGENTES.length) {
+        return forzado - 1;
+      }
+
+      // 2. Rotación en secuencia
+      const ultimo = leerUltimoIndice();
+      if (ultimo !== null) {
+        return (ultimo + 1) % AGENTES.length;
+      }
+
+      // 3. Sin almacenamiento: aleatorio
+      return Math.floor(Math.random() * AGENTES.length);
+    }
+
+    /* ------------------------------------------------------------------
+       ¿Toca mostrar la introducción?
+
+       No se repite cuando el usuario cambia de agente: ese botón
+       recarga la página, y volver a ver el video completo cada vez
+       sería intolerable. La marca vive en sessionStorage, así que una
+       pestaña nueva o una visita nueva sí ven la introducción.
+    ------------------------------------------------------------------ */
+    function debeMostrarIntro() {
+      if (new URLSearchParams(location.search).get('intro') === '0') return false;
+      try {
+        if (window.sessionStorage.getItem(CLAVE_INTRO) === '1') {
+          window.sessionStorage.removeItem(CLAVE_INTRO);
+          return false;
+        }
+      } catch (e) {
+        /* sin almacenamiento: se muestra siempre */
+      }
+      return true;
+    }
+
+    function marcarSaltoIntro() {
+      try { window.sessionStorage.setItem(CLAVE_INTRO, '1'); } catch (e) {}
+    }
+
+    /* ------------------------------------------------------------------
+       Inyección del embed.
+
+       El widget de D-ID lee sus atributos data-* en el momento en que
+       el script se ejecuta, así que la etiqueta no puede ir estática en
+       el HTML: hay que crearla ya con los valores del agente elegido.
+
+       Se inyecta detrás de la introducción, mientras el video corre,
+       para que el agente ya esté montado cuando termine.
+    ------------------------------------------------------------------ */
+    function inyectarAgente(cfg) {
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src  = 'https://agent.d-id.com/v2/index.js';
+      s.setAttribute('data-mode', 'full');
+      s.setAttribute('data-client-key', cfg.clientKey);
+      s.setAttribute('data-agent-id', cfg.agentId);
+      s.setAttribute('data-name', 'did-agent');
+      s.setAttribute('data-monitor', 'true');
+      s.setAttribute('data-target-id', 'did-agent-container');
+      document.body.appendChild(s);
+
+      badgeNombre.textContent = cfg.nombre;
+      // El botón anuncia a quién se cambia, no la acción en abstracto:
+      // con dos personajes, decir "Maduro" informa más que "Cambiar".
+      const siguiente = AGENTES[(AGENTES.indexOf(cfg) + 1) % AGENTES.length];
+      btnSiguiente.textContent = '⇄ ' + siguiente.nombre;
+      badge.hidden = introActiva;
+
+      iniciarTraduccion();
+    }
+
+    btnSiguiente.addEventListener('click', () => {
+      // Basta con recargar: el ciclo avanza solo. Se limpia el forzado
+      // por URL para no quedar clavado en el mismo agente.
+      marcarSaltoIntro();
+      const url = new URL(location.href);
+      url.searchParams.delete('agente');
+      location.href = url.toString();
+    });
+
+    /* ==================================================================
+       INTRODUCCIÓN
+
+       El video NO arranca solo. Se monta pausado, mostrando su primera
+       imagen, y espera el clic del usuario. Ese clic es lo que permite
+       reproducir con sonido: los navegadores bloquean el audio
+       automático, de modo que el mismo gesto sirve para iniciar y para
+       quitar el silencio. De paso desbloquea el audio de la página para
+       el agente que viene después.
+    ================================================================== */
+    let player = null;
+    let temporizadorTope = null;
+    let introTerminada = false;
+    let reproduciendo = false;
+
+    function montarIntro() {
+      introActiva = true;
+      intro.hidden = false;
+      intro.classList.add('esperando');
+
+      const iframe = document.createElement('iframe');
+      iframe.src =
+        'https://player.vimeo.com/video/' + VIDEO_INTRO +
+        '?h=' + HASH_INTRO +
+        '&badge=0&autopause=0&player_id=0&app_id=58479' +
+        '&autoplay=0&controls=0&title=0&byline=0&portrait=0&playsinline=1';
+      iframe.setAttribute('allow',
+        'autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share');
+      iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+      iframe.setAttribute('title', 'Introducción');
+      intro.insertBefore(iframe, introCapa);
+
+      if (window.Vimeo && window.Vimeo.Player) {
+        player = new window.Vimeo.Player(iframe);
+        player.on('ended', terminarIntro);
+        player.on('error', terminarIntro);
+      } else {
+        // Sin la interfaz de Vimeo no hay manera de ordenar la
+        // reproducción desde aquí; se pasa de largo la introducción
+        // antes que dejar al usuario frente a una imagen fija.
+        terminarIntro();
+      }
+    }
+
+    function reproducirIntro() {
+      if (reproduciendo || introTerminada || !player) return;
+      reproduciendo = true;
+
+      btnPlay.hidden = true;
+      intro.classList.remove('esperando');
+
+      player.setMuted(false)
+        .then(() => player.setVolume(1))
+        .then(() => player.play())
+        .catch(() => {
+          // Si el navegador se niega al audio pese al clic, más vale
+          // el video en silencio que ningún video.
+          player.setMuted(true).then(() => player.play()).catch(terminarIntro);
+        });
+
+      // Si la interfaz de Vimeo no carga o el evento de fin se pierde,
+      // la introducción no debe dejar la página atorada.
+      temporizadorTope = setTimeout(terminarIntro, DURACION_TOPE);
+    }
+
+    function terminarIntro() {
+      if (introTerminada) return;
+      introTerminada = true;
+      clearTimeout(temporizadorTope);
+
+      if (player) { try { player.pause(); } catch (e) {} }
+
+      intro.classList.add('saliendo');
+      setTimeout(() => {
+        intro.remove();
+        introActiva = false;
+        badge.hidden = false;
+      }, 600);
+    }
+
+    introCapa.addEventListener('click', reproducirIntro);
+    btnPlay.addEventListener('click', (e) => { e.stopPropagation(); reproducirIntro(); });
+    btnOmitir.addEventListener('click', (e) => { e.stopPropagation(); terminarIntro(); });
+
+    /* ==================================================================
+       Diccionario completo del embed D-ID v2 (build 2.1.27).
+       Las llaves son las cadenas EXACTAS del bundle, en minúsculas.
+       El widget solo trae inglés y alemán de fábrica: no existe opción
+       de configuración para español, por eso se parchea el DOM.
+
+       "call" se traduce siempre como "conversación", no como "llamada".
+    ================================================================== */
+    const TRADUCCIONES = {
+
+      /* ---------- Arranque / conexión ---------- */
+      'start call':                    'Iniciar conversación',
+      'starting...':                   'Iniciando...',
+      'connecting...':                 'Conectando...',
+      'loading...':                    'Cargando...',
+      'hang tight':                    'Un momento',
+      'reconnect':                     'Reconectar',
+      'continue call...':              'Continuar conversación...',
+      "let's continue":                'Continuemos',
+      'create new call':               'Crear nueva conversación',
+      'start a new call':              'Iniciar una nueva conversación',
+      'want to continue where we left off?': '¿Quieres continuar donde nos quedamos?',
+      'are you still here?':           '¿Sigues ahí?',
+      'call ended':                    'Conversación finalizada',
+      'understood':                    'Entendido',
+      'skip':                          'Omitir',
+      'close':                         'Cerrar',
+
+      /* ---------- Controles de conversación ---------- */
+      'end call':                      'Terminar conversación',
+      'turn microphone on':            'Encender micrófono',
+      'mute microphone':               'Silenciar micrófono',
+      'unmute microphone':             'Activar micrófono',
+      'turn off speakers':             'Apagar bocinas',
+      'turn on captions':              'Activar subtítulos',
+      'turn off captions':             'Desactivar subtítulos',
+      'expand menu':                   'Abrir menú',
+      'collapse menu':                 'Cerrar menú',
+      'select audio device':           'Seleccionar dispositivo de audio',
+      'microphone':                    'Micrófono',
+      'speakers':                      'Bocinas',
+      'camera':                        'Cámara',
+      'talk to interrupt':             'Habla para interrumpir',
+
+      /* ---------- Chat ---------- */
+      'chat':                          'Chat',
+      'chat history':                  'Historial de chat',
+      'chat messages':                 'Mensajes del chat',
+      'open chat':                     'Abrir chat',
+      'close chat':                    'Cerrar chat',
+      'type your message here...':     'Escribe tu mensaje aquí...',
+      'send message':                  'Enviar mensaje',
+      'please wait until the response is complete': 'Espera a que termine la respuesta',
+      'agent response':                'Respuesta del agente',
+      'agent is thinking':             'El agente está pensando',
+      'stop viewing':                  'Dejar de ver',
+      'open image':                    'Abrir imagen',
+      'open video':                    'Abrir video',
+
+      /* ---------- Permisos de micrófono y cámara ---------- */
+      "let's get your permission":     'Necesitamos tu permiso',
+      'your browser needs permission to use your microphone.':
+        'Tu navegador necesita permiso para usar el micrófono.',
+      'got a question?':               '¿Tienes una pregunta?',
+      'talk to a live interactive agent, just turn on your mic to start the call.':
+        'Habla con un agente interactivo en vivo: solo enciende el micrófono para iniciar la conversación.',
+      'we are blocked from using your microphone':
+        'El acceso a tu micrófono está bloqueado',
+      "click the page info icon in your browser's address bar":
+        'Haz clic en el ícono de información de la página en la barra de direcciones',
+      'turn on microphone access':     'Permitir acceso al micrófono',
+      'we are blocked from using your camera':
+        'El acceso a tu cámara está bloqueado',
+      'turn on camera access':         'Permitir acceso a la cámara',
+      'camera will be available after generating your agent':
+        'La cámara estará disponible después de generar tu agente',
+
+      /* ---------- Errores y red ---------- */
+      'your network quality is low. this may affect your experience.':
+        'Tu conexión es lenta. Esto puede afectar tu experiencia.',
+      'the agent is temporarily unavailable. please try again later.':
+        'El agente no está disponible por el momento. Inténtalo más tarde.',
+
+      /* ---------- Encuesta de fin de conversación ---------- */
+      'rate your experience':          'Califica tu experiencia',
+      'submit':                        'Enviar',
+      'thanks for your feedback!':     '¡Gracias por tus comentarios!',
+      "couldn't send your feedback. please try again.":
+        'No se pudieron enviar tus comentarios. Inténtalo de nuevo.',
+
+      /* ---------- Etiquetas de accesibilidad ---------- */
+      'control header':                'Encabezado de controles',
+      'main controls':                 'Controles principales',
+      'welcome message':               'Mensaje de bienvenida',
+      'connecting overlay':            'Pantalla de conexión',
+      'agent idle video':              'Video del agente en espera',
+      'agent video stream':            'Video del agente en vivo',
+
+      // Quita esta línea si prefieres conservar el distintivo "AI"
+      'ai':                            'IA',
+    };
+
+    const ATRIBUTOS = ['placeholder', 'aria-label', 'title', 'alt'];
+
+    function traducir(txt) {
+      if (!txt) return null;
+      return TRADUCCIONES[txt.trim().toLowerCase()] || null;
+    }
+
+    /* ==================================================================
+       Traduce un árbol (documento o shadow root)
+    ================================================================== */
+    function traducirArbol(root) {
+      if (!root) return;
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let nodo;
+      while ((nodo = walker.nextNode())) {
+        const es = traducir(nodo.textContent);
+        if (es && nodo.textContent.trim() !== es) nodo.textContent = es;
+      }
+
+      if (!root.querySelectorAll) return;
+
+      root.querySelectorAll('*').forEach(el => {
+        ATRIBUTOS.forEach(attr => {
+          const val = el.getAttribute && el.getAttribute(attr);
+          if (!val) return;
+          const es = traducir(val);
+          if (!es || es === val) return;
+          el.setAttribute(attr, es);
+        });
+      });
+    }
+
+    /* ==================================================================
+       Recorre el documento y TODOS los shadow roots.
+       Clave: un MutationObserver sobre document.body NO detecta cambios
+       dentro de un shadow root, así que hay que observar cada uno.
+
+       El indicador y la introducción se excluyen: ya están en español
+       y no hay razón de recorrerlos en cada pasada.
+    ================================================================== */
+    const observados = new WeakSet();
+    let aplicando = false;
+    let pendiente = null;
+
+    function programar() {
+      if (aplicando) return;
+      clearTimeout(pendiente);
+      pendiente = setTimeout(aplicar, 60);
+    }
+
+    const observer = new MutationObserver(programar);
+    const OPCIONES = {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ATRIBUTOS,
+    };
+
+    function recorrer(root) {
+      if (!root) return;
+      if (root === badge || root === intro) return;
+      traducirArbol(root);
+
+      if (!observados.has(root)) {
+        observados.add(root);
+        observer.observe(root, OPCIONES);
+      }
+
+      if (!root.querySelectorAll) return;
+      root.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) recorrer(el.shadowRoot);
+      });
+    }
+
+    function aplicar() {
+      aplicando = true;
+      try { recorrer(document.body); } catch (e) { /* silencio */ }
+      // Los callbacks del observer son microtareas; este setTimeout(0)
+      // corre después, liberando el candado sin generar bucle infinito.
+      setTimeout(() => { aplicando = false; }, 0);
+    }
+
+    let traduccionIniciada = false;
+    function iniciarTraduccion() {
+      if (traduccionIniciada) return;
+      traduccionIniciada = true;
+      aplicar();
+      setInterval(aplicar, 1500); // red de seguridad: el widget monta tarde
+    }
+
+    /* ==================================================================
+       Cierre limpio al salir de la página
+    ================================================================== */
+    window.addEventListener('beforeunload', () => {
+      const a = document.querySelector('did-agent');
+      if (a && a.disconnect) a.disconnect();
+    });
+
+    /* ==================================================================
+       Arranque
+    ================================================================== */
+    function arrancar() {
+      if (debeMostrarIntro()) montarIntro();
+
+      const i = elegirIndice();
+      guardarIndice(i);
+      inyectarAgente(AGENTES[i]);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', arrancar);
+    } else {
+      arrancar();
+    }
+  })();
+  </script>
+
+</body>
+</html>
