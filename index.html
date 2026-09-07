@@ -600,10 +600,36 @@
       attributeFilter: ATRIBUTOS,
     };
 
+    /* ==================================================================
+       Elementos del widget que se retiran.
+
+       El selector de idioma sobra: la interfaz ya viene traducida al
+       español por el diccionario de arriba, y cambiarla desde ahí
+       dejaría la pantalla en una mezcla incoherente.
+    ================================================================== */
+    const PISTAS_OCULTAR = ['language', 'idioma', 'sprache', 'locale'];
+
+    function debeOcultar(el) {
+      for (const attr of ['aria-label', 'title', 'data-testid', 'id', 'class', 'name']) {
+        const v = el.getAttribute && el.getAttribute(attr);
+        if (v && PISTAS_OCULTAR.some(p => v.toLowerCase().includes(p))) return true;
+      }
+      return false;
+    }
+
+    function ocultarElementos(root) {
+      if (!root.querySelectorAll) return;
+      root.querySelectorAll('button, [role="button"], select, [role="combobox"], [role="menuitem"]')
+        .forEach(el => {
+          if (debeOcultar(el)) el.style.setProperty('display', 'none', 'important');
+        });
+    }
+
     function recorrer(root) {
       if (!root) return;
       if (root === badge || root === intro) return;
       traducirArbol(root);
+      ocultarElementos(root);
 
       if (!observados.has(root)) {
         observados.add(root);
